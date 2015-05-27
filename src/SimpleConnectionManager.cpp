@@ -59,7 +59,7 @@ void SimpleConnectionManager::stop()
 		return;
 	
 	this->running = false;
-	//this->service->stop();
+	this->service->stop();
 	delete this->acceptor;
 	delete this->service;
 	delete this->mainThread;
@@ -86,8 +86,7 @@ void SimpleConnectionManager::mainThreadTask()
 	//this->service->run();
 	while(this->running)
 	{
-		this->service->poll_one();
-		boost::this_thread::sleep(boost::posix_time::milliseconds(100));
+		this->service->run();
 	}
 }
 
