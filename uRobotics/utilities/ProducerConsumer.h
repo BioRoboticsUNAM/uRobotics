@@ -12,25 +12,13 @@
 namespace Robotics{ namespace Utilities{
 
 template<typename T>
-class ProducerConsumer
+class ProducerConsumerBase
 {
-private:
-	std::queue<T> queue;
-	boost::interprocess::interprocess_mutex mutex;
-	boost::interprocess::interprocess_condition cond_empty;
-	boost::interprocess::interprocess_condition cond_full;
-	size_t _count;
-	size_t _capacity;
-	bool _fixedSize;
-	bool _discardExcedent;
-
-private:
-	ProducerConsumer(const ProducerConsumer<T>& other);
 public:
-	ProducerConsumer(void);
-	ProducerConsumer(const int& capacity);
-	ProducerConsumer(const int& capacity, const bool& fixedSize, const bool& discardExcedent);
-	~ProducerConsumer(void);
+	ProducerConsumerBase(void);
+	ProducerConsumerBase(const int& capacity);
+	ProducerConsumerBase(const int& capacity, const bool& fixedSize, const bool& discardExcedent);
+	virtual ~ProducerConsumerBase(void);
 	bool fixedSize() const;
 	bool discardExcedent() const;
 	size_t count() const;
@@ -40,74 +28,114 @@ public:
 	void produce(const T& item);
 	const T& consume();
 	const bool timedConsume(const int& timeOut, T& item);
+
+protected:
+	std::queue<T> queue;
+	boost::interprocess::interprocess_mutex mutex;
+	virtual void pop() = 0;
+
+private:
+	boost::interprocess::interprocess_condition cond_empty;
+	boost::interprocess::interprocess_condition cond_full;
+	size_t _count;
+	size_t _capacity;
+	bool _fixedSize;
+	bool _discardExcedent;
+	ProducerConsumerBase(const ProducerConsumerBase<T>& other);
 };
 
 template<typename T>
-ProducerConsumer<T>::ProducerConsumer(const ProducerConsumer<T>& other){}
+class ProducerConsumer : public ProducerConsumerBase<T>{
+public:
+	ProducerConsumer(void);
+	ProducerConsumer(const int& capacity);
+	ProducerConsumer(const int& capacity, const bool& fixedSize, const bool& discardExcedent);
+
+protected:
+	virtual void pop();
+
+private:
+	ProducerConsumer(const ProducerConsumer<T>& other);
+};
 
 template<typename T>
-ProducerConsumer<T>::ProducerConsumer(void) : _count(0), _capacity(10), _fixedSize(true), _discardExcedent(true)
+class ProducerConsumer<T*> : public ProducerConsumerBase<T*>{
+public:
+	ProducerConsumer(void);
+	ProducerConsumer(const int& capacity);
+	ProducerConsumer(const int& capacity, const bool& fixedSize, const bool& discardExcedent);
+
+protected:
+	virtual void pop();
+
+private:
+	ProducerConsumer(const ProducerConsumer<T*>& other);
+};
+
+template<typename T>
+ProducerConsumerBase<T>::ProducerConsumerBase(const ProducerConsumerBase<T>& other){}
+
+template<typename T>
+ProducerConsumerBase<T>::ProducerConsumerBase(void) : _count(0), _capacity(10), _fixedSize(true), _discardExcedent(true)
 {}
 
 template<typename T>
-ProducerConsumer<T>::ProducerConsumer(const int& capacity):
+ProducerConsumerBase<T>::ProducerConsumerBase(const int& capacity):
 	_count(0),
 	_capacity(capacity < 1 ? 10 : capacity),
 	_fixedSize(capacity >= 1),
 	_discardExcedent(true){}
 
 template<typename T>
-ProducerConsumer<T>::ProducerConsumer(const int& capacity, const bool& fixedSize, const bool& discardExcedent):
+ProducerConsumerBase<T>::ProducerConsumerBase(const int& capacity, const bool& fixedSize, const bool& discardExcedent):
 _count(0), _capacity(capacity), _fixedSize(fixedSize), _discardExcedent(discardExcedent)
 {}
 
 template<typename T>
-ProducerConsumer<T>::~ProducerConsumer(void)
+ProducerConsumerBase<T>::~ProducerConsumerBase(void)
 {
+	clear();
 }
 
 template<typename T>
-size_t ProducerConsumer<T>::count() const
+size_t ProducerConsumerBase<T>::count() const
 {
 	return this->_count;
 }
 
 template<typename T>
-size_t ProducerConsumer<T>::capacity() const
+size_t ProducerConsumerBase<T>::capacity() const
 {
 	return this->capacity;
 }
 
 template<typename T>
-bool ProducerConsumer<T>::discardExcedent() const
+bool ProducerConsumerBase<T>::discardExcedent() const
 {
 	return this->_discardExcedent;
 }
 
 template<typename T>
-bool ProducerConsumer<T>::fixedSize() const
+bool ProducerConsumerBase<T>::fixedSize() const
 {
 	return this->_fixedSize;
 }
 
 template<typename T>
-void ProducerConsumer<T>::clear()
+void ProducerConsumerBase<T>::clear()
 {
 	boost::interprocess::scoped_lock<boost::interprocess::interprocess_mutex> lock(mutex);
-	while(!queue.empty()){
-		if(isPointer<T>::value) delete queue.front();
-		queue.pop();
-	}
+	while(!queue.empty()) pop();
 	_count = 0;
 }
 
 template<typename T>
-bool ProducerConsumer<T>::empty() const{
+bool ProducerConsumerBase<T>::empty() const{
 	return this->_count == 0;
 }
 
 template<typename T>
-void ProducerConsumer<T>::produce(const T& item)
+void ProducerConsumerBase<T>::produce(const T& item)
 {
 	boost::interprocess::scoped_lock<boost::interprocess::interprocess_mutex> lock(mutex);
 	if (_fixedSize && (queue.size() >= _capacity))
@@ -115,10 +143,7 @@ void ProducerConsumer<T>::produce(const T& item)
 		// If the queue cannot be resized and excedent
 		// will be discarded, then dequeue and discard
 		if (_discardExcedent){
-			while(queue.size() >= _capacity){
-				if(isPointer<T>::value) delete queue.front();
-				queue.pop();
-			}
+			while(queue.size() >= _capacity) pop();
 		}
 		// If elements will not be discarded the producer must wait until
 		// there is space available in the queue
@@ -142,7 +167,7 @@ void ProducerConsumer<T>::produce(const T& item)
 }
 
 template<typename T>
-const T& ProducerConsumer<T>::consume()
+const T& ProducerConsumerBase<T>::consume()
 {
 	boost::interprocess::scoped_lock<boost::interprocess::interprocess_mutex> lock(mutex);
 	// If the queue is empty, wait for an item to be added
@@ -166,7 +191,7 @@ const T& ProducerConsumer<T>::consume()
 }
 
 template<typename T>
-const bool ProducerConsumer<T>::timedConsume(const int& timeOut, T& item){
+const bool ProducerConsumerBase<T>::timedConsume(const int& timeOut, T& item){
 	Stopwatch stopwatch;
 	long remaining = timeOut;
 	boost::interprocess::scoped_lock<boost::interprocess::interprocess_mutex> lock(mutex);
@@ -200,6 +225,45 @@ const bool ProducerConsumer<T>::timedConsume(const int& timeOut, T& item){
 	if (_fixedSize && !_discardExcedent)
 		cond_full.notify_all();
 	return true;
+}
+
+template<typename T>
+ProducerConsumer<T>::ProducerConsumer(void)
+	: ProducerConsumerBase<T>(){}
+
+template<typename T>
+ProducerConsumer<T>::ProducerConsumer(const int& capacity)
+	: ProducerConsumerBase<T>(capacity){}
+
+template<typename T>
+ProducerConsumer<T>::ProducerConsumer(const int& capacity, const bool& fixedSize, const bool& discardExcedent)
+	: ProducerConsumerBase<T>(capacity, fixedSize, discardExcedent){}
+
+template<typename T>
+void ProducerConsumer<T>::pop(){
+	typedef ProducerConsumerBase<T> base;
+	boost::interprocess::scoped_lock<boost::interprocess::interprocess_mutex> lock(base::mutex);
+	base::queue.pop();
+}
+
+template<typename T>
+ProducerConsumer<T*>::ProducerConsumer(void)
+	: ProducerConsumerBase<T*>(){}
+
+template<typename T>
+ProducerConsumer<T*>::ProducerConsumer(const int& capacity)
+	: ProducerConsumerBase<T*>(capacity){}
+
+template<typename T>
+ProducerConsumer<T*>::ProducerConsumer(const int& capacity, const bool& fixedSize, const bool& discardExcedent)
+	: ProducerConsumerBase<T*>(capacity, fixedSize, discardExcedent){}
+
+template<typename T>
+void ProducerConsumer<T*>::pop(){
+	typedef ProducerConsumerBase<T*> base;
+	boost::interprocess::scoped_lock<boost::interprocess::interprocess_mutex> lock(base::mutex);
+	delete base::queue.front();
+	base::queue.pop();
 }
 
 } /* Utilities */ } /* Robotics */
